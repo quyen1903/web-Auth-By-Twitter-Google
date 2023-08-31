@@ -9,6 +9,7 @@ const app = express();
 const passportLocalMongoose = require('passport-local-mongoose');
 const findOrCreate = require('mongoose-findorcreate');
 const twitterStrategy = require('passport-twitter').Strategy;
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 //setup ejs 
 app.set('view engine','ejs');
@@ -28,13 +29,14 @@ app.use(passport.session());//our app uses persistent login session so this midd
 //connect to mongoDB
 main().catch(err => console.log(err));
 async function main() {
-  await mongoose.connect('mongodb://127.0.0.1:27017/twitter');
+  await mongoose.connect('mongodb://127.0.0.1:27017/userDB');
 }
 //create mongoose schema
 const userSchema = new mongoose.Schema({
   username : String,
   password : String,
   twitterId:String,
+  googleId:String
 })
 
 //plug passportLocalMongoose and findOrCreate to schema
@@ -76,6 +78,18 @@ passport.use(new twitterStrategy({//each time user register/login, new instance 
     }
 ));
 
+//use googleStrategy
+passport.use(new GoogleStrategy({
+  clientID: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  callbackURL: 'http://localhost:3000/auth/google/secrets',
+}, (accessToken, refreshToken, profile, cb) => {
+  console.log(profile)
+  User.findOrCreate({ googleId: profile.id }, (err, user) => {
+    return cb(err, user);
+  });
+}));
+
 app.get('/',(req,res)=>{
   res.render('home')
 });
@@ -96,6 +110,19 @@ app.get(
   }
 );
 
+// Google authentication
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['profile'] })
+);
+
+// Google authentication callback route
+app.get('/auth/google/secrets',
+  passport.authenticate('google', { failureRedirect: '/' }),
+  (req, res) => {
+    // Successful authentication, redirect to secrets page
+    res.redirect('/secrets');
+  }
+);
 
 app.get('/login',(req,res)=>{
   res.render('login');
@@ -150,5 +177,5 @@ app.get('/submit',(req,res)=>{
 })
 
 app.listen(port, () => {
-    console.log(`Twitter app listening on port ${port}`)
+    console.log(`My app listening on port ${port}`)
   })
