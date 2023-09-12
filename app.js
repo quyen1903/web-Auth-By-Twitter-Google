@@ -70,11 +70,12 @@ passport.deserializeUser((id, done) => {
 passport.use(new twitterStrategy({//each time user register/login, new instance created
   consumerKey:process.env.TWITTER_CONSUMER_KEY,//API key
   consumerSecret:process.env.TWITTER_CONSUMER_SECRET,//API key secret
-  callbackURL:process.env.twitter_CALLBACK_URL//callback
-  },(accessToken, refreshToken,profile, cb)=>{
+  callbackURL:process.env.twitter_CALLBACK_URL//callback URL
+  },(accessToken, refreshToken,profile, cb)=>{//accessToken proves user's identity
+    //refreshToken used to obtain new access token when current one expires.
     console.log(profile)//log user information to console
       User.findOrCreate({twitterId:profile.id},(err,user)=>{//appended an existed object or create new one
-        return cb(err,user);
+        return cb(err,user);//this callback provided as argument to twitterStrategy constructor
       });
     }
 ));
@@ -87,17 +88,18 @@ passport.use(new GoogleStrategy({
 }, (accessToken, refreshToken,profile, cb) => {
   console.log(profile)
   User.findOrCreate({ googleId: profile.id }, (err, user) => {
-    return cb(err, user);//this callback provided as argument to twitterStrategy constructor
+    return cb(err, user);
   });
 }));
 
 
 //authenticate request with twitter
 app.get('/auth/twitter',
+//initialize authenticate process by twitter strategy
   passport.authenticate('twitter',  { failureRedirect: '/' })
 );
 
-//url which user will be redirect after authenticate with provider
+//url which user will be redirect after authenticate with twitter
 app.get(
   '/auth/twitter/secrets',
   passport.authenticate('twitter', {
@@ -115,7 +117,7 @@ app.get('/auth/google',
   passport.authenticate('google', { scope: ['profile'] })//google require scope when signin
 );
 
-// Google authentication callback route
+// user which user will be redirect after authenticate with google
 app.get('/auth/google/secrets',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
@@ -128,79 +130,69 @@ app.get('/',(req,res)=>{
   res.render('home')
 });
 
-app.get('/register/google',
-  passport.authenticate('google', { scope: ['profile'] })
-);
+//
+app.get('/register/google',(req,res)=>{
+  res.redirect('/auth/google')
+});
 
-app.get('/register/google/callback',
-  passport.authenticate('google', { failureRedirect: '/register' }),
-  async (req, res) => {
-    // Google authentication succeeded; create or update user in database
-    const googleProfile = req.user; // Contains user profile data from Google
-
-    // Check if the user already exists in your database by Google ID
+//after success authentication, google redirect user back to application using callback 
+app.get('/register/google/callback', async (req, res) => {
+  try {
+    const googleProfile = req.user;
     const existingUser = await User.findOne({ googleId: googleProfile.id });
 
     if (existingUser) {
-      // User already exists; you may choose to handle this case differently
-      res.redirect('/login'); // Redirect to login or handle accordingly
+      res.render('register', { error: 'An account with this Google profile already exists. Please log in.' });
     } else {
-      // User does not exist; create a new user in database using Google data
+      // Continue with the registration process
       const newUser = new User({
-        username: googleProfile.displayName, // Use Google's display name or customize
-        googleId: googleProfile.id, // Store Google ID to identify the user
+        username: googleProfile.displayName,
+        googleId: googleProfile.id,
       });
 
       await newUser.save();
-
-      // Redirect to the appropriate page after registration
       res.redirect('/secrets');
     }
+  } catch (error) {
+    console.log(error);
+    res.redirect('/register');
   }
-);
+});
 
-app.get('/register/twitter',
-  passport.authenticate('twitter')
-);
 
-app.get('/register/twitter/callback',
-  passport.authenticate('twitter', { failureRedirect: '/register' }),
-  async (req, res) => {
-    // Twitter authentication succeeded; create or update user in your database
-    const twitterProfile = req.user; // Contains user profile data from Twitter
+app.get('/register/twitter',(req,res)=>{
+  res.redirect('/auth/twitter')
+});
 
-    // Check if the user already exists in your database by Twitter ID
+app.get('/register/twitter/callback', async (req, res) => {
+  try {
+    const twitterProfile = req.user;
     const existingUser = await User.findOne({ twitterId: twitterProfile.id });
 
     if (existingUser) {
-      // User already exists; you may choose to handle this case differently
-      res.redirect('/login'); // Redirect to login or handle accordingly
+      res.render('register', { error: 'An account with this Twitter profile already exists. Please log in.' });
     } else {
-      // User does not exist; create a new user in your database using Twitter data
       const newUser = new User({
-        username: twitterProfile.displayName, // Use Twitter's display name or customize
-        twitterId: twitterProfile.id, // Store Twitter ID to identify the user
+        username: twitterProfile.displayName,
+        twitterId: twitterProfile.id,
       });
 
       await newUser.save();
-
-      // Redirect to the appropriate page after registration
       res.redirect('/secrets');
     }
+  } catch (error) {
+    console.log(error);
+    res.redirect('/register');
   }
-);
-
+});
 
 
 app.get('/login',(req,res)=>{
   res.render('login');
 });
 
+//Login with local strategy.
 app.post('/login',async (req,res)=>{
-  //passport.authenticate('local'): handle authentication. 
-  //If authen success, proceed next middleware((req,res,()=>), if fail, return unauthorized
-  //(req,res,()=>{: callback function provided to passport.authenticate('local').
-  //expresss application essentially a series of middleware function call.
   try {
     passport.authenticate('local')(req,res,()=>{
       res.redirect('/secrets')
@@ -223,8 +215,12 @@ app.post('/register', async (req, res) => {
       res.redirect("/secrets");
     });
   } catch (error) {
-    console.log(error);
-    res.redirect('/register');
+    if(error.name === 'UserExistsError'){
+      res.render('register',{error: 'Username already exists. Please choose a different username.',})
+    }else{
+      console.log(error);
+      res.redirect('/register');
+    }
   }
 });
 
