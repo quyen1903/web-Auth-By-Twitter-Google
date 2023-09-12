@@ -71,7 +71,7 @@ passport.use(new twitterStrategy({//each time user register/login, new instance 
   consumerKey:process.env.TWITTER_CONSUMER_KEY,//API key
   consumerSecret:process.env.TWITTER_CONSUMER_SECRET,//API key secret
   callbackURL:process.env.twitter_CALLBACK_URL//callback
-  },(profile,cb)=>{
+  },(accessToken, refreshToken,profile, cb)=>{
     console.log(profile)//log user information to console
       User.findOrCreate({twitterId:profile.id},(err,user)=>{//appended an existed object or create new one
         return cb(err,user);
@@ -87,7 +87,7 @@ passport.use(new GoogleStrategy({
 }, (accessToken, refreshToken,profile, cb) => {
   console.log(profile)
   User.findOrCreate({ googleId: profile.id }, (err, user) => {
-    return cb(err, user);//this callback provided as aargument to twitterStrategy constructor
+    return cb(err, user);//this callback provided as argument to twitterStrategy constructor
   });
 }));
 
@@ -277,5 +277,5 @@ app.post("/submit", async(req, res)=>{
 });
 
 app.listen(port, () => {
-    console.log(`Secrets app listening on port ${port}`)
-  })
+  console.log(`Secrets app listening on port ${port}`)
+})
