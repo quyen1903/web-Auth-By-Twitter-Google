@@ -11,51 +11,46 @@ const findOrCreate = require('mongoose-findorcreate');
 const twitterStrategy = require('passport-twitter').Strategy;
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
-//setup ejs 
 app.set('view engine','ejs');
 app.use(bodyParser.urlencoded({ extended: true }));
 
-//create session middleware
 app.use(session({
   secret: "sessionSecret",
   resave: false,
   saveUninitialized: false,
 }));
 
-//authenticate middleware 
-app.use(passport.initialize());//initialize passport middleware
-app.use(passport.session());//our app uses persistent login session so this middleware must be use
+app.use(passport.initialize());
+app.use(passport.session());
 
-//connect to mongoDB
 main().catch(err => console.log(err));
 async function main() {
-  await mongoose.connect('mongodb://127.0.0.1:27017/userDB');
+  await mongoose.connect(process.env.MONGOOSE_CONNECT);
 }
-//create mongoose schema
-const userSchema = new mongoose.Schema({
-  username : String,
-  password : String,
-  twitterId:String,
-  googleId:String,
-  secret: String,
-})
 
-//plug passportLocalMongoose and findOrCreate to schema
+const userSchema = new mongoose.Schema({
+  username: String,
+  password: String,
+  twitterId: String,
+  googleId: String,
+  secrets: [
+    {
+      _id: mongoose.Schema.Types.ObjectId,
+      text: String,
+    },
+  ],
+});
+
 userSchema.plugin(passportLocalMongoose);
 userSchema.plugin(findOrCreate);
 
-//create User model from userSchema schema
-const User = mongoose.model('User',userSchema)
+const User = mongoose.model('User',userSchema);
+passport.use(User.createStrategy());
 
-
-passport.use(User.createStrategy());//setup LocalStrategy 
-
-//serialize and deserialize user help app presistent session to work.
 passport.serializeUser((user,done)=>{
   done(null,user.id)
 });
 
-//deserialize when subsequent request are made.
 passport.deserializeUser((id, done) => {
   User.findById(id)
     .then(user => {
@@ -66,25 +61,23 @@ passport.deserializeUser((id, done) => {
     });
 });
 
-//use twitterStrategy 
-passport.use(new twitterStrategy({//each time user register/login, new instance created
-  consumerKey:process.env.TWITTER_CONSUMER_KEY,//API key
-  consumerSecret:process.env.TWITTER_CONSUMER_SECRET,//API key secret
-  callbackURL:process.env.twitter_CALLBACK_URL//callback URL
-  },(accessToken, refreshToken,profile, cb)=>{//accessToken proves user's identity
-    //refreshToken used to obtain new access token when current one expires.
-    console.log(profile)//log user information to console
-      User.findOrCreate({twitterId:profile.id},(err,user)=>{//appended an existed object or create new one
-        return cb(err,user);//this callback provided as argument to twitterStrategy constructor
+passport.use(new twitterStrategy({
+  consumerKey:process.env.TWITTER_CONSUMER_KEY,
+  consumerSecret:process.env.TWITTER_CONSUMER_SECRET,
+  callbackURL:process.env.twitter_CALLBACK_URL
+  },(accessToken, refreshToken,profile, cb)=>{
+    
+    console.log(profile)
+      User.findOrCreate({twitterId:profile.id},(err,user)=>{
+        return cb(err,user);
       });
     }
 ));
 
-//use googleStrategy
 passport.use(new GoogleStrategy({
   clientID: process.env.GOOGLE_CLIENT_ID,
   clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-  callbackURL: 'http://localhost:3000/auth/google/secrets',
+  callbackURL: process.env.GOOGLE_CALLBACK_URL,
 }, (accessToken, refreshToken,profile, cb) => {
   console.log(profile)
   User.findOrCreate({ googleId: profile.id }, (err, user) => {
@@ -92,64 +85,61 @@ passport.use(new GoogleStrategy({
   });
 }));
 
-
-//authenticate request with twitter
 app.get('/auth/twitter',
-//initialize authenticate process by twitter strategy
   passport.authenticate('twitter',  { failureRedirect: '/' })
 );
 
-//url which user will be redirect after authenticate with twitter
 app.get(
   '/auth/twitter/secrets',
   passport.authenticate('twitter', {
     failureRedirect: '/login',
-    scope: ['tweet.read', 'tweet.write', 'users.read'],//specify permission that application require from user
+    scope: ['tweet.read', 'tweet.write', 'users.read'],
   }),
   function (req, res) {
-    // Successful authentication, redirect to secrets route.
+    
     res.redirect('/secrets');
   }
 );
 
-// authenticate request with google
 app.get('/auth/google',
-  passport.authenticate('google', { scope: ['profile'] })//google require scope when signin
+  passport.authenticate('google', { scope: ['profile'] })
 );
-
-// user which user will be redirect after authenticate with google
 app.get('/auth/google/secrets',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    // Successful authentication, redirect to secrets page
+    
     res.redirect('/secrets');
   }
 );
+
+function isLoggedIn(req, res, next) {
+  if (req.isAuthenticated()) {
+    return next(); 
+  }
+  
+  res.redirect('/login');
+}
 
 app.get('/',(req,res)=>{
   res.render('home')
 });
 
-//
 app.get('/register/google',(req,res)=>{
   res.redirect('/auth/google')
 });
 
-//after success authentication, google redirect user back to application using callback 
 app.get('/register/google/callback', async (req, res) => {
   try {
     const googleProfile = req.user;
     const existingUser = await User.findOne({ googleId: googleProfile.id });
-
     if (existingUser) {
       res.render('register', { error: 'An account with this Google profile already exists. Please log in.' });
     } else {
-      // Continue with the registration process
+      
       const newUser = new User({
         username: googleProfile.displayName,
         googleId: googleProfile.id,
       });
-
       await newUser.save();
       res.redirect('/secrets');
     }
@@ -158,7 +148,6 @@ app.get('/register/google/callback', async (req, res) => {
     res.redirect('/register');
   }
 });
-
 
 app.get('/register/twitter',(req,res)=>{
   res.redirect('/auth/twitter')
@@ -168,7 +157,6 @@ app.get('/register/twitter/callback', async (req, res) => {
   try {
     const twitterProfile = req.user;
     const existingUser = await User.findOne({ twitterId: twitterProfile.id });
-
     if (existingUser) {
       res.render('register', { error: 'An account with this Twitter profile already exists. Please log in.' });
     } else {
@@ -176,7 +164,6 @@ app.get('/register/twitter/callback', async (req, res) => {
         username: twitterProfile.displayName,
         twitterId: twitterProfile.id,
       });
-
       await newUser.save();
       res.redirect('/secrets');
     }
@@ -186,12 +173,9 @@ app.get('/register/twitter/callback', async (req, res) => {
   }
 });
 
-
 app.get('/login',(req,res)=>{
   res.render('login');
 });
-
-//Login with local strategy.
 app.post('/login',async (req,res)=>{
   try {
     passport.authenticate('local')(req,res,()=>{
@@ -201,7 +185,7 @@ app.post('/login',async (req,res)=>{
     console.log(error);
     res.redirect('/login')
   }
-})
+});
 
 app.get('/register',(req,res)=>{
   res.render('register');
@@ -224,10 +208,9 @@ app.post('/register', async (req, res) => {
   }
 });
 
-
 app.get("/secrets", async (req, res) => {
   try {
-    const foundUsers = await User.find().exec();//wait for find user in database
+    const foundUsers = await User.find().exec();
     if (foundUsers) {
       res.render('secrets', { usersWithSecrets: foundUsers });
     } else {
@@ -238,37 +221,114 @@ app.get("/secrets", async (req, res) => {
     res.status(500).send('An error occurred');
   }
 });
+
 app.get('/logout',(req,res)=>{
   req.logOut();
   res.render('home')
-})
+});
 
 app.get('/submit',(req,res)=>{
   res.render('submit')
-})
+});
+
+app.get('/edit/secret/:id', isLoggedIn, async (req, res) => {
+  try {
+    const secretId = req.params.id;
+    const user = req.user; 
+    
+    const secretToEdit = user.secrets.find((secret) => secret._id.toString() === secretId);
+    if (!secretToEdit) {
+      return res.status(404).send('Secret not found.');
+    }
+    res.render('edit', { secret: secretToEdit });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('An error occurred.');
+  }
+});
+
+app.post('/edit/secret/:id', isLoggedIn, async (req, res) => {
+  try {
+    const secretId = req.params.id;
+    const updatedSecretText = req.body.updatedSecretText;
+    const user = req.user; 
+    
+    const secretToEdit = user.secrets.find((secret) => secret._id.toString() === secretId);
+    if (!secretToEdit) {
+      return res.status(404).send('Secret not found.');
+    }
+    
+    secretToEdit.text = updatedSecretText;
+    
+    await user.save();
+    res.redirect('/secrets'); 
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('An error occurred.');
+  }
+});
+
+app.get('/delete/secret/:id', isLoggedIn, async (req, res) => {
+  try {
+    const secretId = req.params.id;
+    const user = req.user; 
+    
+    const secretToDelete = user.secrets.find((secret) => secret._id.toString() === secretId);
+    if (!secretToDelete) {
+      return res.status(404).send('Secret not found.');
+    }
+    res.render('delete', { secret: secretToDelete });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('An error occurred.');
+  }
+});
+
+app.post('/delete/secret/:id', isLoggedIn, async (req, res) => {
+  try {
+    const secretId = req.params.id;
+    const user = req.user; 
+    
+    const secretIndex = user.secrets.findIndex((secret) => secret._id.toString() === secretId);
+    if (secretIndex === -1) {
+      return res.status(404).send('Secret not found.');
+    }
+    
+    user.secrets.splice(secretIndex, 1);
+    
+    await user.save();
+    res.redirect('/secrets'); 
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('An error occurred.');
+  }
+});
 
 app.get("/submit", function(req, res){
   if (req.isAuthenticated()){
     res.render("submit");
   } else {
-    res.redirect("/login");//user is not authenticated, redirect to login
+    res.redirect("/login");
   }
 });
 
-app.post("/submit", async(req, res)=>{
-  const submittedSecret = req.body.secret;
+app.post('/submit', isLoggedIn, async (req, res) => {
   try {
-    const foundUser = await User.findById(req.user.id).exec();//wait for find user
-    if(foundUser){
-      foundUser.secret = submittedSecret;//assign secret for user s
-      await foundUser.save();
-      res.redirect('/secrets')
-    }else(
-      res.status(404).send('user not found /submit route failure')
-    )
+    const submittedSecret = req.body.secret;
+    const user = req.user; 
+    
+    const newSecret = {
+      _id: new mongoose.Types.ObjectId(),
+      text: submittedSecret,
+    };
+    
+    user.secrets.push(newSecret);
+    
+    await user.save();
+    res.redirect('/secrets');
   } catch (error) {
-    console.error(error)
-    res.status(500).send('an error occurred')
+    console.error(error);
+    res.status(500).send('An error occurred.');
   }
 });
 
